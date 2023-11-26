@@ -1,32 +1,78 @@
-/**
- * Welcome to Cloudflare Workers! This is your first worker.
- *
- * - Run `npm run dev` in your terminal to start a development server
- * - Open a browser tab at http://localhost:8787/ to see your worker in action
- * - Run `npm run deploy` to publish your worker
- *
- * Learn more at https://developers.cloudflare.com/workers/
- */
+import { Hono } from 'hono/quick'
+import { cache } from 'hono/cache'
+import { sha256 } from 'hono/utils/crypto'
+import { jwt } from 'hono/jwt'
+import { detectType } from './utils'
 
-export interface Env {
-	// Example binding to KV. Learn more at https://developers.cloudflare.com/workers/runtime-apis/kv/
-	// MY_KV_NAMESPACE: KVNamespace;
-	//
-	// Example binding to Durable Object. Learn more at https://developers.cloudflare.com/workers/runtime-apis/durable-objects/
-	// MY_DURABLE_OBJECT: DurableObjectNamespace;
-	//
-	// Example binding to R2. Learn more at https://developers.cloudflare.com/workers/runtime-apis/r2/
-	// MY_BUCKET: R2Bucket;
-	//
-	// Example binding to a Service. Learn more at https://developers.cloudflare.com/workers/runtime-apis/service-bindings/
-	// MY_SERVICE: Fetcher;
-	//
-	// Example binding to a Queue. Learn more at https://developers.cloudflare.com/queues/javascript-apis/
-	// MY_QUEUE: Queue;
+type Bindings = {
+  BUCKET: R2Bucket
+  JWT_SECRET: string
+  IDENTIFY_KEY: string
 }
 
-export default {
-	async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
-		return new Response('Hello World!');
-	},
-};
+type Data = {
+  body: string
+  width?: string
+  height?: string
+}
+
+const maxAge = 60 * 60 * 24 * 30
+
+const app = new Hono<{ Bindings: Bindings }>()
+
+app.use(
+	"*",
+	jwt({
+		secret: "Rubw4ZVY3G%7",
+		alg: "HS256"
+	})
+)
+
+app.put('/upload', async (c) => {
+  const data = await c.req.json<Data>()
+  const base64 = data.body
+  if (base64.length < 10) return c.notFound()
+
+  const type = detectType(base64)
+  if (!type) return c.notFound()
+
+  const payload = c.get('jwtPayload')
+
+  const body = Uint8Array.from(atob(base64), (c) => c.charCodeAt(0))
+
+  let key
+
+  if (data.width && data.height) {
+    key = payload.ID + "/" + (await sha256(body)) + `_${data.width}x${data.height}` + '.' + type?.suffix
+  } else {
+    key = payload.ID + "/" + (await sha256(body)) + '.' + type?.suffix
+  }
+
+  await c.env.BUCKET.put(key, body, { httpMetadata: { contentType: type.mimeType } })
+
+  return c.text(key)
+})
+
+app.get(
+  '*',
+  cache({
+    cacheName: 'r2-image-worker'
+  })
+)
+
+app.get('/:id/:key', async (c) => {
+  const key = c.req.param('key');
+  const id = c.req.param('id');
+
+  const object = await c.env.BUCKET.get(id + "/" + key)
+  if (!object) return c.notFound()
+  const data = await object.arrayBuffer()
+  const contentType = object.httpMetadata?.contentType ?? ''
+
+  return c.body(data, 200, {
+    'Cache-Control': `public, max-age=${maxAge}`,
+    'Content-Type': contentType
+  })
+})
+
+export default app
