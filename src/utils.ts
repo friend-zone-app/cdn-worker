@@ -4,9 +4,9 @@ export type Type = {
 };
 
 const signatures: Record<string, Type> = {
-	iVBORw0KGgo: { mimeType: 'image/png', suffix: 'png' },
-	'/9j/': { mimeType: 'image/jpg', suffix: 'jpg' },
-	'UklGRg==': { mimeType: 'image/webp', suffix: 'webp' },
+	'image/png': { mimeType: 'image/png', suffix: 'png' },
+	'image/jpeg': { mimeType: 'image/jpg', suffix: 'jpg' },
+	'image/webp': { mimeType: 'image/webp', suffix: 'webp' },
 };
 
 export const detectType = (b64: string): Type | undefined => {

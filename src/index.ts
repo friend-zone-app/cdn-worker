@@ -28,29 +28,32 @@ app.use(
 	})
 )
 
-app.put('/upload', async (c) => {
-  const data = await c.req.json<Data>()
-  const base64 = data.body
-  if (base64.length < 10) return c.notFound()
+app.post('/upload', async (c) => {
+  const data = await c.req.blob()
+  const type = data.type
 
-  const type = detectType(base64)
-  if (!type) return c.notFound()
+  console.log(data, type)
 
-  const payload = c.get('jwtPayload')
+  if(!data || typeof type != "string") return c.notFound();
 
-  const body = Uint8Array.from(atob(base64), (c) => c.charCodeAt(0))
+  const mimeType = detectType(type);
+  if(!mimeType) return c.notFound();
 
-  let key
+  const payload = c.get('jwtPayload');
 
-  if (data.width && data.height) {
-    key = payload.ID + "/" + (await sha256(body)) + `_${data.width}x${data.height}` + '.' + type?.suffix
-  } else {
-    key = payload.ID + "/" + (await sha256(body)) + '.' + type?.suffix
+  const name = payload.ID + "/" + (await sha256(Date.now())) + '.' + mimeType.suffix
+
+  console.log(name)
+
+  try{
+    await c.env.BUCKET.put(name, data, { httpMetadata: c.req.raw.headers }).catch(e => console.log(e))
+  
+    return c.text(name);
+  } catch(e) {
+    console.log(e)
+    return c.notFound();
   }
-
-  await c.env.BUCKET.put(key, body, { httpMetadata: { contentType: type.mimeType } })
-
-  return c.text(key)
+  
 })
 
 app.get(
